@@ -1,0 +1,59 @@
+{
+	"name": "tsv-format",
+	"displayName": "tsv format — TypeScript, Svelte & CSS",
+	"description": "Format-on-save for TypeScript/JS, Svelte, and CSS, powered by tsv. One canonical, non-configurable style.",
+	"version": "0.0.1",
+	"publisher": "fuzdev",
+	"license": "MIT",
+	"author": {
+		"name": "Ryan Atkinson",
+		"email": "mail@ryanatkn.com",
+		"url": "https://www.ryanatkn.com/"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/fuzdev/vscode_extension_tsv_format.git"
+	},
+	"homepage": "https://github.com/fuzdev/vscode_extension_tsv_format",
+	"bugs": "https://github.com/fuzdev/vscode_extension_tsv_format/issues",
+	"categories": ["Formatters"],
+	"keywords": ["typescript", "javascript", "svelte", "css", "formatter", "tsv"],
+	"engines": {
+		"vscode": "^1.90.0"
+	},
+	"main": "./dist/node/extension.js",
+	"browser": "./dist/web/extension.js",
+	"activationEvents": [
+		"onLanguage:typescript",
+		"onLanguage:javascript",
+		"onLanguage:svelte",
+		"onLanguage:css"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"command": "tsv_format.show_output",
+				"title": "Show Output",
+				"category": "tsv format"
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run build",
+		"build": "node esbuild.js --production",
+		"watch": "node esbuild.js --watch",
+		"typecheck": "tsc --noEmit",
+		"test": "node test/run.js",
+		"check": "npm run typecheck && npm run build && npm run test",
+		"package": "npm run build && npx --yes @vscode/vsce package"
+	},
+	"dependencies": {
+		"@fuzdev/tsv_format_wasm": "^0.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "24.13.2",
+		"@types/vscode": "1.90.0",
+		"esbuild": "0.28.1",
+		"typescript": "6.0.3"
+	}
+}

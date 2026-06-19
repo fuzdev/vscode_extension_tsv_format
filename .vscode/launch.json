@@ -1,0 +1,25 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Run Extension (Desktop)",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+			"outFiles": ["${workspaceFolder}/dist/node/**/*.js"],
+			"preLaunchTask": "npm: watch"
+		},
+		{
+			"name": "Run Extension (Web)",
+			"type": "extensionHost",
+			"debugWebWorkerHost": true,
+			"request": "launch",
+			"args": [
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"--extensionDevelopmentKind=web"
+			],
+			"outFiles": ["${workspaceFolder}/dist/web/**/*.js"],
+			"preLaunchTask": "npm: watch"
+		}
+	]
+}
