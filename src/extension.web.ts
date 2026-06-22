@@ -11,7 +11,7 @@ export const activate = async (context: vscode.ExtensionContext): Promise<void> 
 	const wasm_uri = vscode.Uri.joinPath(context.extensionUri, 'dist', 'web', 'tsv_wasm_bg.wasm');
 	const wasm_bytes = await vscode.workspace.fs.readFile(wasm_uri);
 	await init({module_or_path: wasm_bytes});
-	activate_formatter(context, {format_css, format_svelte, format_typescript}, IgnoreStack);
+	await activate_formatter(context, {format_css, format_svelte, format_typescript}, IgnoreStack);
 };
 
 export const deactivate = deactivate_formatter;

@@ -15,10 +15,16 @@ interface World {
 	folder_path: string;
 	files: Map<string, string>;
 	dirs: Set<string>;
+	// when set, the mock's `findFiles` rejects — simulating a web-host virtual-FS error
+	find_files_throws?: boolean;
 }
 
 /** Build a world from a file spec; auto-derives parent dirs and (optionally) `.git`. */
-const build_world = (files: Record<string, string>, is_repo: boolean): World => {
+const build_world = (
+	files: Record<string, string>,
+	is_repo: boolean,
+	find_files_throws = false,
+): World => {
 	const fmap = new Map<string, string>();
 	const dirs = new Set<string>([FOLDER]);
 	for (const [rel, content] of Object.entries(files)) {
@@ -32,12 +38,35 @@ const build_world = (files: Record<string, string>, is_repo: boolean): World => 
 		}
 	}
 	if (is_repo) dirs.add(`${FOLDER}/.git`);
-	return {folder_path: FOLDER, files: fmap, dirs};
+	return {folder_path: FOLDER, files: fmap, dirs, find_files_throws};
 };
 
-const flush = () => new Promise((r) => setTimeout(r, 0));
 const UNFORMATTED_TS = 'const   x=1';
 const UNFORMATTED_CSS = 'a{color:red}';
+const UNFORMATTED_SVELTE = '<div   >x</div   >';
+
+// typed accessors over the mock's test hooks
+const set_world = (w: World): void =>
+	(vscode as unknown as {__set_world(w: World): void}).__set_world(w);
+const get_provider = (): {provideDocumentFormattingEdits(d: unknown): unknown[] | undefined} =>
+	(
+		vscode as unknown as {
+			__get_provider(): {provideDocumentFormattingEdits(d: unknown): unknown[] | undefined};
+		}
+	).__get_provider();
+const get_status = (): {visible: boolean; text: string} =>
+	(vscode as unknown as {__get_status_item(): {visible: boolean; text: string}}).__get_status_item();
+const fire_close = (doc: unknown): void =>
+	(vscode as unknown as {__fire_close(d: unknown): void}).__fire_close(doc);
+
+/** A minimal mock `TextDocument` for one path / language / content. */
+const make_doc = (rel: string, languageId: string, content: string) => ({
+	uri: vscode.Uri.file(`${FOLDER}/${rel}`),
+	languageId,
+	fileName: `${FOLDER}/${rel}`,
+	getText: () => content,
+	positionAt: (n: number) => ({line: 0, character: n}),
+});
 
 let pass = 0;
 let fail = 0;
@@ -48,36 +77,90 @@ const check = (label: string, ignored: boolean, expected: boolean): void => {
 		console.log(`FAIL ${label} (ignored=${ignored}, want=${expected})`);
 	}
 };
+const expect = (label: string, cond: boolean): void => {
+	if (cond) pass++;
+	else {
+		fail++;
+		console.log(`FAIL ${label}`);
+	}
+};
 
 const run_scenario = async (
 	name: string,
 	files: Record<string, string>,
 	is_repo: boolean,
 	cases: Array<[string, string, boolean]>,
+	find_files_throws = false,
 ): Promise<void> => {
-	(vscode as unknown as {__set_world(w: World): void}).__set_world(build_world(files, is_repo));
+	set_world(build_world(files, is_repo, find_files_throws));
 	const ctx = make_context();
-	activate_formatter(ctx as never, formatters, IgnoreStack as never);
-	await flush(); // let the off-save-path reload populate the cache
-	const provider = (
-		vscode as unknown as {__get_provider(): {provideDocumentFormattingEdits(d: unknown): unknown[]}}
-	).__get_provider();
+	// activation awaits the initial ignore-file load, so the cache is ready here
+	await activate_formatter(ctx as never, formatters, IgnoreStack as never);
+	const provider = get_provider();
 	for (const [rel, languageId, expected] of cases) {
-		const content = languageId === 'css' ? UNFORMATTED_CSS : UNFORMATTED_TS;
-		const document = {
-			uri: vscode.Uri.file(`${FOLDER}/${rel}`),
-			languageId,
-			fileName: `${FOLDER}/${rel}`,
-			getText: () => content,
-			positionAt: (n: number) => ({line: 0, character: n}),
-		};
-		const edits = provider.provideDocumentFormattingEdits(document) ?? [];
+		const content =
+			languageId === 'css'
+				? UNFORMATTED_CSS
+				: languageId === 'svelte'
+					? UNFORMATTED_SVELTE
+					: UNFORMATTED_TS;
+		const edits = provider.provideDocumentFormattingEdits(make_doc(rel, languageId, content)) ?? [];
 		check(`${name}: ${rel}`, edits.length === 0, expected);
 	}
 	deactivate_formatter();
 };
 
+// Dispatch + parse-error + status behavior, independent of the ignore files: a
+// loose folder with no ignore files (nothing pruned), all docs at the root.
+const run_dispatch_cases = async (): Promise<void> => {
+	set_world(build_world({}, false));
+	const ctx = make_context();
+	await activate_formatter(ctx as never, formatters, IgnoreStack as never);
+	const provider = get_provider();
+	const status = get_status();
+	const edits = (doc: unknown): unknown[] => provider.provideDocumentFormattingEdits(doc) ?? [];
+
+	// supported + unformatted -> one full-document edit
+	expect(
+		'dispatch: ts unformatted -> edits',
+		edits(make_doc('app.ts', 'typescript', UNFORMATTED_TS)).length === 1,
+	);
+	// already-formatted -> no edits (a clean file is never marked dirty)
+	expect(
+		'dispatch: ts already formatted -> no edits',
+		edits(make_doc('app.ts', 'typescript', format_typescript(UNFORMATTED_TS))).length === 0,
+	);
+	// css dispatches too
+	expect(
+		'dispatch: css unformatted -> edits',
+		edits(make_doc('app.css', 'css', UNFORMATTED_CSS)).length === 1,
+	);
+	// unsupported languageId, no extension fallback -> no edits
+	expect(
+		'dispatch: json unsupported -> no edits',
+		edits(make_doc('data.json', 'json', UNFORMATTED_TS)).length === 0,
+	);
+	// `.svelte` extension fallback when the languageId isn't `svelte` (Svelte ext absent)
+	expect(
+		'dispatch: .svelte fallback -> edits',
+		edits(make_doc('weird.svelte', 'plaintext', UNFORMATTED_SVELTE)).length === 1,
+	);
+
+	// parse error -> no edits (file left unchanged) + the status indicator is shown
+	const bad = make_doc('bad.ts', 'typescript', 'const x = (');
+	expect('dispatch: parse error -> no edits', edits(bad).length === 0);
+	expect('dispatch: parse error -> status shown', status.visible && status.text.includes('tsv'));
+	// closing the failing document clears the indicator
+	fire_close(bad);
+	expect('dispatch: close clears status', !status.visible);
+
+	deactivate_formatter();
+};
+
 const main = async (): Promise<void> => {
+	// 0. dispatch / parse-error / status behavior (not ignore-file related)
+	await run_dispatch_cases();
+
 	// 1. repo + .gitignore: gitignored dist/ skipped; non-gitignored build/ formatted
 	//    (heuristic OFF in a repo with a .gitignore)
 	await run_scenario(
@@ -221,6 +304,32 @@ const main = async (): Promise<void> => {
 			['vendored/v.svelte', 'svelte', true],
 			['app.svelte', 'svelte', false],
 		],
+	);
+
+	// 9. findFiles rejects (web-host virtual-FS error): activation must still
+	//    succeed and the provider register. Degraded mode = the folder-root ignore
+	//    files (read directly, not via findFiles) + the always-on safety-net /
+	//    build-output pruning still apply; only NESTED ignore files are missed —
+	//    never "format everything". (If activation rejected, this scenario would
+	//    throw before any check ran.)
+	await run_scenario(
+		'findFiles rejects: root ignore + safety nets survive, nested missed',
+		{
+			'.gitignore': 'dist/\n',
+			'sub/.gitignore': 'nested.ts\n',
+			'dist/out.ts': UNFORMATTED_TS,
+			'node_modules/pkg/index.ts': UNFORMATTED_TS,
+			'sub/nested.ts': UNFORMATTED_TS,
+			'src/app.ts': UNFORMATTED_TS,
+		},
+		true,
+		[
+			['dist/out.ts', 'typescript', true], // root .gitignore honored despite findFiles failing
+			['node_modules/pkg/index.ts', 'typescript', true], // safety net always applies
+			['sub/nested.ts', 'typescript', false], // nested .gitignore missed (degraded) -> formats
+			['src/app.ts', 'typescript', false], // normal source
+		],
+		true,
 	);
 
 	console.log(`${pass} passed, ${fail} failed`);

@@ -7,6 +7,8 @@
 
 let world = {folder_path: '/repo', files: new Map(), dirs: new Set()};
 let captured_provider;
+let status_item;
+let close_listener;
 
 const enc = new TextEncoder();
 
@@ -60,6 +62,8 @@ const workspace = {
 		return uri.path === f.uri.path || uri.path.startsWith(`${f.uri.path}/`) ? f : undefined;
 	},
 	async findFiles(relPattern, _exclude) {
+		// opt-in failure injection: exercises the web-host virtual-FS rejection path
+		if (world.find_files_throws) throw new Error('findFiles failed (mock)');
 		const name = relPattern.pattern.replace(/^\*\*\//, '');
 		const root = relPattern.folder.uri.path;
 		const out = [];
@@ -92,6 +96,14 @@ const workspace = {
 	onDidChangeWorkspaceFolders() {
 		return {dispose() {}};
 	},
+	onDidCloseTextDocument(listener) {
+		close_listener = listener;
+		return {
+			dispose() {
+				if (close_listener === listener) close_listener = undefined;
+			},
+		};
+	},
 	asRelativePath(uri) {
 		return uri.path;
 	},
@@ -102,7 +114,20 @@ const window = {
 		return {appendLine() {}, show() {}, dispose() {}};
 	},
 	createStatusBarItem() {
-		return {text: '', tooltip: '', command: '', show() {}, hide() {}, dispose() {}};
+		status_item = {
+			text: '',
+			tooltip: '',
+			command: '',
+			visible: false,
+			show() {
+				this.visible = true;
+			},
+			hide() {
+				this.visible = false;
+			},
+			dispose() {},
+		};
+		return status_item;
 	},
 };
 
@@ -135,5 +160,11 @@ module.exports = {
 	},
 	__get_provider() {
 		return captured_provider;
+	},
+	__get_status_item() {
+		return status_item;
+	},
+	__fire_close(doc) {
+		if (close_listener) close_listener(doc);
 	},
 };

@@ -17,28 +17,33 @@ export interface TsvFormatters {
  * repo-root `.prettierignore`), so the extension skips exactly the files
  * `tsv format` would. Layers go in shallowest-first; the two kinds are evaluated
  * `.gitignore`-then-tsv, so a tsv `!` can re-include a gitignore'd path.
+ *
+ * Only the members the extension uses are typed here. The stack is built and
+ * freed per document (never unwound while traversing), so the package's
+ * `pop_gitignore` / `pop_tsv` are omitted — as are `is_empty`, `should_format_file`
+ * (the extension dispatches by `languageId`, incl. `.js`, which that helper's
+ * `.ts`/`.svelte`/`.css` filter would reject), `heuristic_shadow_warning` (the
+ * extension prunes silently, no stderr hint), and `classify_dir` (the per-directory
+ * verdict for a top-down *traverser*; the extension has no traversal and uses the
+ * per-file `is_path_pruned` instead).
  */
 export interface IgnoreStack {
 	push_gitignore(anchor: string, content: string): void;
-	pop_gitignore(): void;
 	push_tsv(anchor: string, content: string): void;
-	pop_tsv(): void;
 	is_ignored(path: string, is_dir: boolean): boolean;
 	/**
-	 * The shared per-directory discovery verdict (`tsv_discover::classify_dir` in
-	 * the tsv workspace) — the CLI's safety-net / build-output-heuristic / matcher
-	 * decision in one call: `'descend'` to recurse, `'prune'` to skip the subtree,
-	 * `'prune_warn'` likewise (the CLI also prints a stderr hint there; the
-	 * extension just prunes). `name` is the directory's final path segment,
-	 * `child_rel` its folder-root-relative `/`-separated path, `heuristic_active`
-	 * true while no `.gitignore` governs the level. Replaces the former
-	 * `is_reincluded` + the extension's hand-rolled safety-net/heuristic copy.
-	 *
-	 * Returns one of `'descend'` / `'prune'` / `'prune_warn'`; typed `string` to
-	 * stay structurally assignable to the WASM class (wasm-bindgen can't express
-	 * the literal union), and the only consumer compares against `'descend'`.
+	 * Whether `rel` (a folder-root-relative file path) is skipped because some
+	 * ancestor directory would be pruned by `tsv format`'s traversal — the safety
+	 * nets (`.git`/`node_modules`/…), the build-output heuristic
+	 * (`dist`/`build`/`target` + hidden dirs, with its `!`-re-include override), or
+	 * the matcher. The shared per-file companion to the CLI's per-directory
+	 * `classify_dir` (`tsv_discover::is_path_pruned`): it walks `rel`'s ancestor
+	 * directories itself and reconstructs each level's heuristic state from the
+	 * stack's own pushed `.gitignore` anchors, so the extension no longer rebuilds
+	 * that walk (or the heuristic state machine) in TypeScript. Pair with
+	 * `is_ignored(rel, false)` for the file-level match.
 	 */
-	classify_dir(name: string, child_rel: string, heuristic_active: boolean): string;
+	is_path_pruned(rel: string): boolean;
 	free(): void;
 }
 
@@ -143,17 +148,33 @@ const read_ignore_file = async (uri: vscode.Uri): Promise<string | undefined> =>
 
 /** Every ignore file of one name under `folder` (excluding node_modules), keyed
  * by the directory holding it. `findFiles`' `**​/` prefix can miss the folder-root
- * file, so the caller reads that one explicitly. */
+ * file, so the caller reads that one explicitly. Never rejects: a `findFiles`
+ * failure is logged and yields an empty map, so the caller still degrades to the
+ * folder-root file plus structural pruning instead of aborting activation. */
 const find_ignore_files = async (
 	folder: vscode.WorkspaceFolder,
 	name: string,
 ): Promise<Map<string, string>> => {
 	const root = folder.uri.path;
 	const out = new Map<string, string>();
-	const found = await vscode.workspace.findFiles(
-		new vscode.RelativePattern(folder, `**/${name}`),
-		'**/node_modules/**',
-	);
+	let found: vscode.Uri[];
+	try {
+		found = await vscode.workspace.findFiles(
+			new vscode.RelativePattern(folder, `**/${name}`),
+			'**/node_modules/**',
+		);
+	} catch (err) {
+		// a `findFiles` rejection (likeliest on the web host's virtual FS) must not
+		// abort activation or leak an unhandled rejection from a watcher reload — keep
+		// `reload_ignore_folder` non-throwing. The caller still reads the folder-root
+		// file directly and installs a state object, so this degrades to "root ignore
+		// files only" plus the always-on safety-net / build-output pruning, never to
+		// "format everything"
+		output_channel?.appendLine(
+			`[${new Date().toISOString()}] could not scan for ${name} under ${folder.name}: ${to_error_message(err)}`,
+		);
+		return out;
+	}
 	for (const uri of found) {
 		const text = await read_ignore_file(uri);
 		if (text !== undefined) out.set(ignore_dir_rel(root, uri.path), text);
@@ -224,48 +245,13 @@ const tsv_layer_for_dir = (state: FolderIgnore, dir: string): string | undefined
 };
 
 /**
- * Whether any ancestor directory of `rel` would be pruned by the CLI's traversal
- * before reaching the file — the safety nets (always) and the build-output
- * heuristic (`dist`/`build`/`target` + hidden dirs, only while no `.gitignore`
- * governs that level, and unless an explicit tsv `!` re-includes it). The decision
- * itself is the **shared CLI verdict** (`stack.classify_dir`, from the
- * `tsv_discover` crate), so the extension no longer hand-rolls the safety-net /
- * heuristic logic — only the per-file *walk* (which the CLI does top-down) is
- * reconstructed here: ask the verdict for each ancestor directory, treating any
- * non-`'descend'` result as a prune. A file under e.g. a non-gitignored `build/`
- * is skipped just as the CLI skips it.
- *
- * `stack` is the already-assembled per-document stack. `heuristic_active` per
- * level is reconstructed exactly as the CLI tracks it: on once no `.gitignore`
- * has governed an ancestor (seeded with the folder-root `.gitignore`).
- */
-const is_ancestor_pruned = (state: FolderIgnore, rel: string, stack: IgnoreStack): boolean => {
-	const dirs = ancestor_dirs(rel); // ['', 'a', 'a/b', …] — '' is the folder, never pruned
-	// whether a `.gitignore` governs the level *above* the dir under consideration
-	// (the CLI turns the heuristic off once one is seen on the path); seeded with
-	// the folder-root `.gitignore`, only meaningful inside a repo
-	let gitignore_above = state.in_repo && state.gitignores.has('');
-	for (let i = 1; i < dirs.length; i++) {
-		const dir = dirs[i];
-		const slash = dir.lastIndexOf('/');
-		const name = slash === -1 ? dir : dir.slice(slash + 1);
-		const heuristic_active = !state.in_repo || !gitignore_above;
-		// the shared verdict folds in the safety nets, the build-output heuristic
-		// (with its `!`-re-include override), and the matcher; the extension prunes
-		// on `'prune_warn'` too — it doesn't surface the CLI's stderr hint.
-		if (stack.classify_dir(name, dir, heuristic_active) !== 'descend') return true;
-		if (state.in_repo && state.gitignores.has(dir)) gitignore_above = true;
-	}
-	return false;
-};
-
-/**
  * Whether the document is excluded by its workspace folder's ignore files
  * (hierarchical `.gitignore` inside a repo + the hierarchical `.formatignore` /
  * repo-root `.prettierignore` tsv layers) or by the CLI's traversal pruning
- * (safety nets + build-output heuristic). Synchronous — reads only the prebuilt
- * cache, assembling and freeing a per-call `IgnoreStack`. Documents outside every
- * workspace folder (loose/untitled) are never ignored.
+ * (safety nets + build-output heuristic, via the shared `stack.is_path_pruned`).
+ * Synchronous — reads only the prebuilt cache, assembling and freeing a per-call
+ * `IgnoreStack`. Documents outside every workspace folder (loose/untitled) are
+ * never ignored.
  */
 const is_document_ignored = (document: vscode.TextDocument): boolean => {
 	if (!ignore_stack_ctor) return false;
@@ -297,7 +283,10 @@ const is_document_ignored = (document: vscode.TextDocument): boolean => {
 			const content = tsv_layer_for_dir(state, dir);
 			if (content !== undefined) stack.push_tsv(dir, content);
 		}
-		return stack.is_ignored(rel, false) || is_ancestor_pruned(state, rel, stack);
+		// file-level match, then the shared per-file directory-prune walk (safety
+		// nets + build-output heuristic + matcher), which reconstructs the heuristic
+		// state from the stack's own `.gitignore` anchors — no walk hand-rolled here
+		return stack.is_ignored(rel, false) || stack.is_path_pruned(rel);
 	} finally {
 		stack.free();
 	}
@@ -306,15 +295,20 @@ const is_document_ignored = (document: vscode.TextDocument): boolean => {
 /**
  * Loads ignore state for the current workspace folders and wires up refresh on
  * ignore-file and workspace-folder changes. Registers its disposables on the
- * extension context.
+ * extension context. Async: awaits the initial folder load so the cache is ready
+ * by the time activation resolves (subsequent refreshes stay off the save path).
  *
  * @mutates context.subscriptions
  */
-const activate_ignore = (context: vscode.ExtensionContext, IgnoreStack: IgnoreStackCtor): void => {
+const activate_ignore = async (
+	context: vscode.ExtensionContext,
+	IgnoreStack: IgnoreStackCtor,
+): Promise<void> => {
 	ignore_stack_ctor = IgnoreStack;
-	for (const folder of vscode.workspace.workspaceFolders ?? []) {
-		void reload_ignore_folder(folder);
-	}
+	// await the initial load so the cache is populated before the provider can run:
+	// activation finishes before VSCode invokes a formatter, so this closes the
+	// startup window where an ignored file could format once before its cache landed
+	await Promise.all((vscode.workspace.workspaceFolders ?? []).map(reload_ignore_folder));
 
 	// one watcher covers .gitignore + the tsv files in every folder; any change
 	// re-reads that folder's whole state off the save path (works in both hosts)
@@ -413,15 +407,17 @@ const format_document = (
 /**
  * Registers the single document-formatting provider plus its status-bar
  * indicator, Output channel, and command. Host-agnostic: each entry passes the
- * already-initialized formatters, so this never touches WASM init.
+ * already-initialized formatters, so this never touches WASM init. Async — it
+ * awaits the one-time ignore-file load so the skip cache is ready before the
+ * (synchronous) provider can run; the per-format path itself stays synchronous.
  *
  * @mutates context.subscriptions
  */
-export const activate_formatter = (
+export const activate_formatter = async (
 	context: vscode.ExtensionContext,
 	formatters: TsvFormatters,
 	IgnoreStack: IgnoreStackCtor,
-): void => {
+): Promise<void> => {
 	output_channel = vscode.window.createOutputChannel('tsv');
 	status_item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0);
 	status_item.command = 'tsv_format.show_output';
@@ -432,9 +428,12 @@ export const activate_formatter = (
 		vscode.commands.registerCommand('tsv_format.show_output', () => {
 			output_channel?.show(true);
 		}),
+		// clear the parse-error indicator when the failing document is closed, so a
+		// lingering ⚠ doesn't outlive a file the user never re-saves
+		vscode.workspace.onDidCloseTextDocument(clear_format_failure),
 	);
 
-	activate_ignore(context, IgnoreStack);
+	await activate_ignore(context, IgnoreStack);
 
 	const provider: vscode.DocumentFormattingEditProvider = {
 		provideDocumentFormattingEdits(document) {

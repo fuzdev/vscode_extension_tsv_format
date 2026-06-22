@@ -36,18 +36,20 @@ exists". A subdir-opened repo therefore falls back to the loose regime
 (`.formatignore` + heuristic, no `.gitignore`) — the conservative side (it skips
 more, never formats build output the CLI would skip).
 
-To match "skip exactly what `tsv format` skips," the extension reconstructs the
-CLI's per-file traversal *walk* (`is_ancestor_pruned`), but the prune *decision*
-itself is the **shared CLI verdict** — `IgnoreStack.classify_dir(name, child_rel,
-heuristic_active)` (the tsv workspace's `tsv_discover` crate: the safety nets
-`.git`/`node_modules`/`.hg`/`.svn`/`.jj`, the build-output heuristic
-`dist`/`build`/`target` + hidden dirs with its `!`-re-include override, and the
-matcher, all in one call). So the extension **no longer hand-rolls** the safety-net
-/ heuristic name-sets: it only walks a document's ancestor directories and asks the
-verdict, treating any non-`'descend'` result as a prune. This is the one *traversal*
-concept the extension rebuilds; everything else is the shared `IgnoreStack`. (If
-this fidelity ever isn't wanted, dropping `is_ancestor_pruned` reverts to
-ignore-files-only.)
+To match "skip exactly what `tsv format` skips," the extension defers the **whole**
+directory-prune decision — both the per-file ancestor *walk* and the prune *verdict*
+— to the shared `IgnoreStack.is_path_pruned(rel)` (the tsv workspace's
+`tsv_discover` crate). Given the per-document stack, that one call walks `rel`'s
+ancestor directories, reconstructs each level's heuristic state from the stack's own
+pushed `.gitignore` anchors, and applies the safety nets
+(`.git`/`node_modules`/`.hg`/`.svn`/`.jj`), the build-output heuristic
+(`dist`/`build`/`target` + hidden dirs with its `!`-re-include override), and the
+matcher. So the extension **no longer rebuilds any of that in TypeScript** — not the
+walk, and not the `heuristic_active` state machine it used to thread by hand (the one
+shared-policy seam it previously kept; it briefly used the per-directory
+`classify_dir` for this before `is_path_pruned` existed). The skip check is just
+`is_ignored(rel, false) || is_path_pruned(rel)`. (`classify_dir` stays the CLI's
+per-directory primitive for a real top-down walk; the extension has none.)
 
 ## Layout
 
@@ -61,7 +63,12 @@ ignore-files-only.)
   off the save path and refreshed via a `FileSystemWatcher` over
   `**/.{gitignore,prettierignore,formatignore}`. On save it assembles a
   per-document `IgnoreStack` from that cache (synchronously), runs `is_ignored` +
-  `is_ancestor_pruned`, and frees it, so the provider stays synchronous.
+  `is_path_pruned`, and frees it, so the provider stays synchronous. Activation
+  **awaits** that initial load before registering the provider, closing the
+  startup window where a save could beat the cache; a `findFiles` rejection there
+  (likeliest on the web host's virtual FS) is caught and logged, degrading to the
+  folder-root ignore files plus the always-on safety-net/heuristic pruning — never
+  aborting activation or formatting everything.
 - `src/extension.node.ts` — Node entry; WASM inits synchronously at import.
 - `src/extension.web.ts` — web entry; reads the bundled `.wasm` via
   `context.extensionUri` + `workspace.fs` and `await init(bytes)` once.
@@ -82,8 +89,8 @@ repo — make the edits and stop, the user commits.
   path. The Node build shims `import.meta.url` to the bundle's own file URL so the
   package's import-time `readFileSync` finds the copied `.wasm`.
 - `npm run build` (production) / `npm run watch` / `npm run check` (typecheck +
-  build). `npm run package` builds + runs `npx @vscode/vsce package` (vsce is not
-  a dependency — it's invoked transiently).
+  build + the `test/run.js` smoke test). `npm run package` builds + runs `npx
+  @vscode/vsce package` (vsce is not a dependency — it's invoked transiently).
 - Single runtime dependency: `@fuzdev/tsv_format_wasm` — the format-only tsv WASM
   (the smallest of the three variants). Dev deps: esbuild, typescript,
   @types/node (24.x, matching the host), @types/vscode (pinned to the
