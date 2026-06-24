@@ -336,9 +336,12 @@ const to_error_message = (value: unknown): string =>
 
 /**
  * Resolves the tsv formatter for a document, dispatching on `languageId` and
- * falling back to the `.svelte` extension. The fallback only matters when a
- * `.svelte` file is opened without the Svelte extension assigning its language
- * id — ts/js/css ids are built into VSCode and always present.
+ * falling back to the `.svelte` file extension. The extension contributes the
+ * `.svelte` → `svelte` language association itself (`package.json`
+ * `contributes.languages`), so a `.svelte` file carries the `svelte` languageId
+ * — and fires `onLanguage:svelte` — with or without the Svelte extension
+ * installed; the fileName fallback is now defensive only (e.g. a `.svelte`
+ * document forced to some other id). ts/js/css ids are built into VSCode.
  */
 const formatter_for_document = (
 	document: vscode.TextDocument,
@@ -443,8 +446,9 @@ export const activate_formatter = async (
 
 	// One provider for every supported language. No `scheme` filter, so it covers
 	// both the desktop `file` scheme and the web host's virtual schemes. The
-	// `**/*.svelte` pattern backs up the `svelte` language id for when the Svelte
-	// extension isn't installed.
+	// extension contributes the `.svelte` → `svelte` association itself
+	// (`contributes.languages`), so the `svelte` id is present without the Svelte
+	// extension; the `**/*.svelte` pattern is a defensive backstop for that id.
 	const selector: vscode.DocumentSelector = [
 		{language: 'typescript'},
 		{language: 'javascript'},

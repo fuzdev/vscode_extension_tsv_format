@@ -54,7 +54,9 @@ per-directory primitive for a real top-down walk; the extension has none.)
 ## Layout
 
 - `src/format_provider.ts` — host-agnostic core: the provider, languageId →
-  `format_*` dispatch (ts/js/css/svelte only), `.svelte` extension fallback,
+  `format_*` dispatch (ts/js/css/svelte only), `.svelte` fileName fallback (now
+  defensive — the manifest `contributes.languages` owns the `.svelte` → `svelte`
+  association, so the id is present even without the Svelte extension),
   status-bar + `tsv` Output channel for parse failures, and the gitignore-aware
   skip logic. Per workspace folder it caches `{in_repo, gitignores, formatignores,
   prettierignore}` — the `.gitignore` / `.formatignore` texts keyed by directory
@@ -73,6 +75,27 @@ per-directory primitive for a real top-down walk; the extension has none.)
 - `src/extension.web.ts` — web entry; reads the bundled `.wasm` via
   `context.extensionUri` + `workspace.fs` and `await init(bytes)` once.
 - `esbuild.js` — dual CJS build; copies `tsv_wasm_bg.wasm` next to each bundle.
+- `icon.png` — 128×128 marketplace icon (`package.json` `icon`); shipped in the
+  `.vsix` (not excluded by `.vscodeignore`).
+
+## Manifest shape
+
+Beyond `main`/`browser`/`activationEvents`, the manifest carries:
+
+- `contributes.languages` — declares the `.svelte` → `svelte` association, so a
+  `.svelte` file gets the `svelte` languageId (and fires `onLanguage:svelte`)
+  **without** the Svelte extension. VSCode core ships no `.svelte` association —
+  only the Svelte extension does — so without this, `onLanguage:svelte` would
+  never fire for a lone `.svelte` file and the provider would never activate.
+  Language contributions merge by id, so this coexists with the Svelte extension
+  (adds nothing when it's present). The `{pattern: '**/*.svelte'}` selector and
+  the `.svelte` fileName fallback are now redundant backstops.
+- `capabilities.untrustedWorkspaces.supported: true` — format-on-save must keep
+  working in a Restricted-Mode (untrusted) workspace, the default for a freshly
+  opened/cloned folder. Safe to declare: tsv is non-configurable, runs no
+  project-supplied code, and reads ignore files as data only.
+- `capabilities.virtualWorkspaces: true` — explicit support for the web host's
+  virtual workspaces (vscode.dev / github.dev), matching the `browser` entry.
 
 ## Committing
 
@@ -97,3 +120,37 @@ repo — make the edits and stop, the user commits.
   `engines.vscode` floor, not latest).
 - Published to the VSCode Marketplace (`vsce`) and Open VSX (`ovsx`). Version
   bumps and publishing are the maintainer's responsibility.
+
+### Publishing & updating
+
+The runtime dependency is **vendored into the bundle**: esbuild inlines
+`@fuzdev/tsv_format_wasm` and copies its `.wasm` into `dist/{node,web}/`, and
+`.vscodeignore` excludes `node_modules/**`. So the `.vsix` ships whatever WASM is
+in `node_modules` *at build time* — the published extension does not resolve the
+dependency at install time. Two consequences:
+
+- **The dependency must be published before the extension is.** `package.json`
+  pins `@fuzdev/tsv_format_wasm@^0.2.0` (for `is_path_pruned`), but only `0.1.0`
+  is on the registry until tsv ships v0.2. Until then a clean `npm ci` / `npm
+  install` **fails** (`ETARGET`, no matching `^0.2.0`), and the only working tree
+  is one with a locally-built WASM linked into `node_modules` — which reports
+  `0.1.0` but contains `is_path_pruned`. Building/publishing the `.vsix` from that
+  tree ships an unpublished WASM. **Before the marketplace publish:** confirm tsv
+  v0.2 is on the registry, then run a clean `npm install` so `package-lock.json`
+  resolves `^0.2.0` from the registry (the lock is otherwise stale at `^0.1.0`)
+  and the bundled WASM has published provenance. The go/no-go check is "`npm ci`
+  succeeds against the registry."
+- **Updating the formatter = rebuild, not a user dependency bump.** To pick up a
+  new tsv release, bump the `@fuzdev/tsv_format_wasm` range, `npm install`, `npm
+  run check`, then re-`package`/publish. There is no runtime auto-update of the
+  formatter — its version is frozen into each `.vsix`.
+
+Publish flow (maintainer-owned): `npm run check` → bump `version` → `npm run
+package` (or `vsce publish`) for the Marketplace → `ovsx publish` for Open VSX.
+Keep the published WASM in sync across both registries. The `engines.vscode`
+floor (`^1.90.0`) and `@types/vscode` track the **minimum** supported host, not
+latest; raise both together only when a newer host API is actually needed.
+
+**Pre-publish checklist** (live confirmation, can't be driven headlessly):
+desktop **multi-root** + the **web** host (vscode.dev / github.dev) — F5 via
+`.vscode/launch.json` ("Run Extension (Desktop)" / "(Web)").

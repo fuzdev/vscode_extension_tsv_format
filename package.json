@@ -3,6 +3,7 @@
 	"displayName": "tsv format — TypeScript, Svelte & CSS",
 	"description": "Format-on-save for TypeScript/JS, Svelte, and CSS, powered by tsv. One canonical, non-configurable style.",
 	"version": "0.0.1",
+	"icon": "icon.png",
 	"publisher": "fuzdev",
 	"license": "MIT",
 	"author": {
@@ -29,7 +30,19 @@
 		"onLanguage:svelte",
 		"onLanguage:css"
 	],
+	"capabilities": {
+		"untrustedWorkspaces": {
+			"supported": true
+		},
+		"virtualWorkspaces": true
+	},
 	"contributes": {
+		"languages": [
+			{
+				"id": "svelte",
+				"extensions": [".svelte"]
+			}
+		],
 		"commands": [
 			{
 				"command": "tsv_format.show_output",
