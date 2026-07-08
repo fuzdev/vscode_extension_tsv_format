@@ -19,8 +19,9 @@ It honors the same ignore files the CLI does, via the `IgnoreStack` export from
 `@fuzdev/tsv_format_wasm` — the same matcher, in the CLI's two regimes keyed on
 `.git`. **Inside a repo** (a `<folder>/.git` exists): `.gitignore`
 **hierarchically** (one per directory, git-faithful) + `.formatignore`
-**hierarchically** + a repo-root `.prettierignore` shadowed by a repo-root
-`.formatignore`; tsv layers apply after `.gitignore`, so a `!` re-includes.
+**hierarchically** + `.prettierignore` **hierarchically**, each shadowed by a
+*sibling* `.formatignore` in the same directory; tsv layers apply after
+`.gitignore`, so a `!` re-includes.
 **Outside a repo**: only `.formatignore` (hierarchically); `.gitignore` /
 `.prettierignore` are not read — exactly as the CLI does. It skips ignored files
 on save **and** on explicit "Format Document": the provider can't tell the two
@@ -42,7 +43,7 @@ directory-prune decision — both the per-file ancestor *walk* and the prune *ve
 `tsv_discover` crate). Given the per-document stack, that one call walks `rel`'s
 ancestor directories, reconstructs each level's heuristic state from the stack's own
 pushed `.gitignore` anchors, and applies the safety nets
-(`.git`/`node_modules`/`.hg`/`.svn`/`.jj`), the build-output heuristic
+(`.git`/`node_modules`/`.sl`/`.hg`/`.svn`/`.jj`), the build-output heuristic
 (`dist`/`build`/`target` + hidden dirs with its `!`-re-include override), and the
 matcher. So the extension **no longer rebuilds any of that in TypeScript** — not the
 walk, and not the `heuristic_active` state machine it used to thread by hand (the one
@@ -59,10 +60,11 @@ per-directory primitive for a real top-down walk; the extension has none.)
   association, so the id is present even without the Svelte extension),
   status-bar + `tsv` Output channel for parse failures, and the gitignore-aware
   skip logic. Per workspace folder it caches `{in_repo, gitignores, formatignores,
-  prettierignore}` — the `.gitignore` / `.formatignore` texts keyed by directory
-  (found via `findFiles`, plus an explicit folder-root read since `**/` misses
-  depth 0), the repo-root `.prettierignore`, and the `.git` regime flag — prebuilt
-  off the save path and refreshed via a `FileSystemWatcher` over
+  prettierignores}` — the `.gitignore` / `.formatignore` / `.prettierignore` texts
+  keyed by directory (found via `findFiles`, plus an explicit folder-root read
+  since `**/` misses depth 0; `.prettierignore` hierarchically inside a repo, each
+  shadowed per-directory by a sibling `.formatignore`), and the `.git` regime flag
+  — prebuilt off the save path and refreshed via a `FileSystemWatcher` over
   `**/.{gitignore,prettierignore,formatignore}`. On save it assembles a
   per-document `IgnoreStack` from that cache (synchronously), runs `is_ignored` +
   `is_path_pruned`, and frees it, so the provider stays synchronous. Activation

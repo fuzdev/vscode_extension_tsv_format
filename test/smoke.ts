@@ -233,6 +233,37 @@ const main = async (): Promise<void> => {
 		],
 	);
 
+	// 4b. hierarchical .prettierignore (repo): a nested .prettierignore is honored
+	//     like .formatignore (subskip.ts pruned), a deeper `!` re-includes over a
+	//     shallower layer (keep.gen.ts), and a sibling .formatignore shadows only its
+	//     own directory's .prettierignore (b/.formatignore beats b/.prettierignore)
+	await run_scenario(
+		'hierarchical prettierignore',
+		{
+			'.prettierignore': '*.gen.ts\n',
+			'sub/.prettierignore': '!keep.gen.ts\nsubskip.ts\n',
+			'b/.formatignore': 'bf.ts\n',
+			'b/.prettierignore': 'bp.ts\n',
+			'a.gen.ts': UNFORMATTED_TS,
+			'sub/keep.gen.ts': UNFORMATTED_TS,
+			'sub/drop.gen.ts': UNFORMATTED_TS,
+			'sub/subskip.ts': UNFORMATTED_TS,
+			'sub/keep.ts': UNFORMATTED_TS,
+			'b/bf.ts': UNFORMATTED_TS,
+			'b/bp.ts': UNFORMATTED_TS,
+		},
+		true,
+		[
+			['a.gen.ts', 'typescript', true], // root .prettierignore *.gen.ts
+			['sub/keep.gen.ts', 'typescript', false], // deeper sub/.prettierignore !keep.gen.ts re-includes
+			['sub/drop.gen.ts', 'typescript', true], // still ignored by root *.gen.ts
+			['sub/subskip.ts', 'typescript', true], // nested .prettierignore honored hierarchically
+			['sub/keep.ts', 'typescript', false],
+			['b/bf.ts', 'typescript', true], // b/.formatignore
+			['b/bp.ts', 'typescript', false], // b/.prettierignore shadowed by sibling b/.formatignore
+		],
+	);
+
 	// 5. loose (non-repo): .formatignore honored; .gitignore/.prettierignore NOT read;
 	//    heuristic ON (build/dist/hidden skipped)
 	await run_scenario(

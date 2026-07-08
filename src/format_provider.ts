@@ -13,8 +13,8 @@ export interface TsvFormatters {
 /**
  * The `IgnoreStack` class exported by `@fuzdev/tsv_format_wasm` — tsv's
  * hierarchical, git-faithful discovery matcher. Assembled per document from a
- * workspace folder's `.gitignore` files plus its `.formatignore` hierarchy (and a
- * repo-root `.prettierignore`), so the extension skips exactly the files
+ * workspace folder's `.gitignore` files plus its `.formatignore` and
+ * `.prettierignore` hierarchies, so the extension skips exactly the files
  * `tsv format` would. Layers go in shallowest-first; the two kinds are evaluated
  * `.gitignore`-then-tsv, so a tsv `!` can re-include a gitignore'd path.
  *
@@ -68,9 +68,8 @@ let status_item: vscode.StatusBarItem | undefined;
 
 // Discovery ignore files, mirroring the CLI. `.gitignore` is honored
 // hierarchically (one per directory, git-faithful) but only inside a git repo;
-// `.formatignore` is honored hierarchically in both regimes; a repo-root
-// `.prettierignore` is read only inside a repo and only when no repo-root
-// `.formatignore` shadows it.
+// `.formatignore` is honored hierarchically in both regimes; `.prettierignore` is
+// honored hierarchically inside a repo, each shadowed by a sibling `.formatignore`.
 const gitignore_file_name = '.gitignore';
 const formatignore_file_name = '.formatignore';
 const prettierignore_file_name = '.prettierignore';
@@ -78,7 +77,7 @@ const prettierignore_file_name = '.prettierignore';
 // The cached ignore state for one workspace folder, rebuilt off the save path.
 interface FolderIgnore {
 	// whether `<folder>/.git` exists — the CLI's two-regime switch. Inside a repo
-	// the extension honors `.gitignore` + the repo-root `.prettierignore`; outside
+	// the extension honors `.gitignore` + hierarchical `.prettierignore`; outside
 	// one it honors only `.formatignore` (hierarchically), exactly like the CLI.
 	in_repo: boolean;
 	// `.gitignore` text keyed by the directory holding it, relative to the folder
@@ -86,9 +85,10 @@ interface FolderIgnore {
 	gitignores: Map<string, string>;
 	// `.formatignore` text keyed by directory (hierarchical, both regimes).
 	formatignores: Map<string, string>;
-	// the repo-root `.prettierignore` text — read only when `in_repo` and no
-	// repo-root `.formatignore` shadows it; `undefined` otherwise.
-	prettierignore: string | undefined;
+	// `.prettierignore` text keyed by directory (hierarchical, inside a repo only),
+	// each shadowed per-directory by a sibling `.formatignore` in `tsv_layer_for_dir`.
+	// Empty outside a repo.
+	prettierignores: Map<string, string>;
 }
 
 // gitignore-aware discovery: the prebuilt ignore state per workspace folder,
@@ -185,9 +185,9 @@ const find_ignore_files = async (
 /**
  * Rebuilds the cached ignore state for a workspace folder: its `in_repo` flag, the
  * `.formatignore` hierarchy (both regimes), and — only inside a repo — the
- * `.gitignore` hierarchy plus a repo-root `.prettierignore` (read only when no
- * repo-root `.formatignore` shadows it). The workspace folder is the eval root.
- * Async (reads files); never on the save path.
+ * `.gitignore` hierarchy plus the `.prettierignore` hierarchy (each shadowed
+ * per-directory by a sibling `.formatignore`). The workspace folder is the eval
+ * root. Async (reads files); never on the save path.
  *
  * @mutates folder_ignores
  */
@@ -205,7 +205,7 @@ const reload_ignore_folder = async (folder: vscode.WorkspaceFolder): Promise<voi
 	}
 
 	const gitignores = new Map<string, string>();
-	let prettierignore: string | undefined;
+	const prettierignores = new Map<string, string>();
 	if (in_repo) {
 		for (const [dir, text] of await find_ignore_files(folder, gitignore_file_name)) {
 			gitignores.set(dir, text);
@@ -217,15 +217,22 @@ const reload_ignore_folder = async (folder: vscode.WorkspaceFolder): Promise<voi
 			);
 			if (root_gi !== undefined) gitignores.set('', root_gi);
 		}
-		// the repo-root `.prettierignore` is shadowed by a repo-root `.formatignore`
-		if (!formatignores.has('')) {
-			prettierignore = await read_ignore_file(
+		// `.prettierignore` is hierarchical inside a repo (like `.formatignore`);
+		// per-directory shadowing by a sibling `.formatignore` is applied in
+		// `tsv_layer_for_dir`, so read every one here.
+		for (const [dir, text] of await find_ignore_files(folder, prettierignore_file_name)) {
+			prettierignores.set(dir, text);
+		}
+		// `**/` can miss the folder-root file — read it explicitly
+		if (!prettierignores.has('')) {
+			const root_pi = await read_ignore_file(
 				vscode.Uri.joinPath(folder.uri, prettierignore_file_name),
 			);
+			if (root_pi !== undefined) prettierignores.set('', root_pi);
 		}
 	}
 
-	folder_ignores.set(folder.uri.toString(), {in_repo, gitignores, formatignores, prettierignore});
+	folder_ignores.set(folder.uri.toString(), {in_repo, gitignores, formatignores, prettierignores});
 };
 
 const clear_ignore_folder = (folder: vscode.WorkspaceFolder): void => {
@@ -236,18 +243,18 @@ const clear_ignore_folders = (): void => {
 	folder_ignores.clear();
 };
 
-/** The tsv-layer text for one directory: its `.formatignore`, or — at the repo
- * root only — the `.prettierignore` a root `.formatignore` would shadow. */
+/** The tsv-layer text for one directory: its `.formatignore`, or — when no sibling
+ * `.formatignore` is present — its `.prettierignore` (per-directory shadowing). */
 const tsv_layer_for_dir = (state: FolderIgnore, dir: string): string | undefined => {
 	const formatignore = state.formatignores.get(dir);
 	if (formatignore !== undefined) return formatignore;
-	return dir === '' ? state.prettierignore : undefined;
+	return state.prettierignores.get(dir);
 };
 
 /**
  * Whether the document is excluded by its workspace folder's ignore files
  * (hierarchical `.gitignore` inside a repo + the hierarchical `.formatignore` /
- * repo-root `.prettierignore` tsv layers) or by the CLI's traversal pruning
+ * `.prettierignore` tsv layers) or by the CLI's traversal pruning
  * (safety nets + build-output heuristic, via the shared `stack.is_path_pruned`).
  * Synchronous — reads only the prebuilt cache, assembling and freeing a per-call
  * `IgnoreStack`. Documents outside every workspace folder (loose/untitled) are

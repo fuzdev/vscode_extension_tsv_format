@@ -53,7 +53,7 @@ support - for now tsv formats whole files only.
   honored by tsv itself.
 - **Ignore files** are respected: a file your project ignores via `.gitignore`
   (hierarchically, like git, inside a repo), a `.formatignore` (hierarchically), or
-  a repo-root `.prettierignore` is skipped on save *and* on Format Document —
+  a `.prettierignore` (also hierarchically, inside a repo) is skipped on save *and* on Format Document —
   matching what `tsv format` would skip on the command line (including its
   build-output skips like `dist/` and `build/`).
 - **Parse errors** never interrupt you: the file is left unchanged, a small
