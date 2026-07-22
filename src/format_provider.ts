@@ -21,11 +21,11 @@ export interface TsvFormatters {
  * Only the members the extension uses are typed here. The stack is built and
  * freed per document (never unwound while traversing), so the package's
  * `pop_gitignore` / `pop_tsv` are omitted — as are `is_empty`, `should_format_file`
- * (the extension dispatches by `languageId`, incl. `.js`, which that helper's
- * `.ts`/`.svelte`/`.css` filter would reject), `heuristic_shadow_warning` (the
- * extension prunes silently, no stderr hint), and `classify_dir` (the per-directory
- * verdict for a top-down *traverser*; the extension has no traversal and uses the
- * per-file `is_path_pruned` instead).
+ * (the extension dispatches by `languageId`, not by extension, so it never needs
+ * that helper's filter), `heuristic_shadow_warning` (the extension prunes silently,
+ * no stderr hint), and `classify_dir` (the per-directory verdict for a top-down
+ * *traverser*; the extension has no traversal and uses the per-file
+ * `is_path_pruned` instead).
  */
 export interface IgnoreStack {
 	push_gitignore(anchor: string, content: string): void;
