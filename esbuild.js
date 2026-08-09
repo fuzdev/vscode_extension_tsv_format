@@ -15,7 +15,7 @@ const watch = process.argv.includes('--watch');
 // the format-only WASM lives next to the package's package.json
 const wasm_path = path.join(
 	path.dirname(require.resolve('@fuzdev/tsv_format_wasm/package.json')),
-	'tsv_wasm_bg.wasm',
+	'tsv_wasm_bg.wasm'
 );
 
 /** Copies `tsv_wasm_bg.wasm` next to a bundle after each (re)build. */
@@ -24,10 +24,10 @@ const copy_wasm_plugin = (out_dir) => ({
 	setup(build) {
 		build.onEnd((result) => {
 			if (result.errors.length) return;
-			fs.mkdirSync(out_dir, {recursive: true});
+			fs.mkdirSync(out_dir, { recursive: true });
 			fs.copyFileSync(wasm_path, path.join(out_dir, 'tsv_wasm_bg.wasm'));
 		});
-	},
+	}
 });
 
 /** @type {import('esbuild').BuildOptions} */
@@ -36,7 +36,7 @@ const shared = {
 	minify: production,
 	sourcemap: !production,
 	external: ['vscode'],
-	logLevel: 'info',
+	logLevel: 'info'
 };
 
 /** @type {Array<import('esbuild').BuildOptions>} */
@@ -51,9 +51,9 @@ const targets = [
 		// The package's Node entry inits WASM at import via `readFileSync(new
 		// URL('./tsv_wasm_bg.wasm', import.meta.url))`. CJS has no live import.meta,
 		// so resolve it to the bundle's own file URL -> reads dist/node/*.wasm.
-		banner: {js: "const import_meta_url = require('url').pathToFileURL(__filename).href;"},
-		define: {'import.meta.url': 'import_meta_url'},
-		plugins: [copy_wasm_plugin(path.resolve('dist/node'))],
+		banner: { js: "const import_meta_url = require('url').pathToFileURL(__filename).href;" },
+		define: { 'import.meta.url': 'import_meta_url' },
+		plugins: [copy_wasm_plugin(path.resolve('dist/node'))]
 	},
 	{
 		...shared,
@@ -64,9 +64,9 @@ const targets = [
 		target: 'es2022',
 		// The browser entry's `new URL(import.meta.url)` default is dead code here
 		// (we always hand init the bytes), so silence the empty-import-meta warning.
-		logOverride: {'empty-import-meta': 'silent'},
-		plugins: [copy_wasm_plugin(path.resolve('dist/web'))],
-	},
+		logOverride: { 'empty-import-meta': 'silent' },
+		plugins: [copy_wasm_plugin(path.resolve('dist/web'))]
+	}
 ];
 
 const main = async () => {

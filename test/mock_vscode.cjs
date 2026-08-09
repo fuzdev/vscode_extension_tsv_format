@@ -5,7 +5,7 @@
 // (the absence of which was a real bug this test caught).
 'use strict';
 
-let world = {folder_path: '/repo', files: new Map(), dirs: new Set()};
+let world = { folder_path: '/repo', files: new Map(), dirs: new Set() };
 let captured_provider;
 let status_item;
 let close_listener;
@@ -45,13 +45,13 @@ class Range {
 
 const TextEdit = {
 	replace(range, newText) {
-		return {range, newText};
-	},
+		return { range, newText };
+	}
 };
 
-const StatusBarAlignment = {Left: 1, Right: 2};
+const StatusBarAlignment = { Left: 1, Right: 2 };
 
-const folders = () => [{uri: Uri.file(world.folder_path), name: 'repo', index: 0}];
+const folders = () => [{ uri: Uri.file(world.folder_path), name: 'repo', index: 0 }];
 
 const workspace = {
 	get workspaceFolders() {
@@ -79,39 +79,39 @@ const workspace = {
 	},
 	fs: {
 		async stat(uri) {
-			if (world.files.has(uri.path)) return {type: 1};
-			if (world.dirs.has(uri.path)) return {type: 2};
+			if (world.files.has(uri.path)) return { type: 1 };
+			if (world.dirs.has(uri.path)) return { type: 2 };
 			throw new Error(`ENOENT ${uri.path}`);
 		},
 		async readFile(uri) {
 			const content = world.files.get(uri.path);
 			if (content === undefined) throw new Error(`ENOENT ${uri.path}`);
 			return enc.encode(content);
-		},
+		}
 	},
 	createFileSystemWatcher() {
-		const sub = () => ({dispose() {}});
-		return {onDidCreate: sub, onDidChange: sub, onDidDelete: sub, dispose() {}};
+		const sub = () => ({ dispose() {} });
+		return { onDidCreate: sub, onDidChange: sub, onDidDelete: sub, dispose() {} };
 	},
 	onDidChangeWorkspaceFolders() {
-		return {dispose() {}};
+		return { dispose() {} };
 	},
 	onDidCloseTextDocument(listener) {
 		close_listener = listener;
 		return {
 			dispose() {
 				if (close_listener === listener) close_listener = undefined;
-			},
+			}
 		};
 	},
 	asRelativePath(uri) {
 		return uri.path;
-	},
+	}
 };
 
 const window = {
 	createOutputChannel() {
-		return {appendLine() {}, show() {}, dispose() {}};
+		return { appendLine() {}, show() {}, dispose() {} };
 	},
 	createStatusBarItem() {
 		status_item = {
@@ -125,23 +125,23 @@ const window = {
 			hide() {
 				this.visible = false;
 			},
-			dispose() {},
+			dispose() {}
 		};
 		return status_item;
-	},
+	}
 };
 
 const commands = {
 	registerCommand() {
-		return {dispose() {}};
-	},
+		return { dispose() {} };
+	}
 };
 
 const languages = {
 	registerDocumentFormattingEditProvider(_selector, provider) {
 		captured_provider = provider;
-		return {dispose() {}};
-	},
+		return { dispose() {} };
+	}
 };
 
 module.exports = {
@@ -166,5 +166,5 @@ module.exports = {
 	},
 	__fire_close(doc) {
 		if (close_listener) close_listener(doc);
-	},
+	}
 };

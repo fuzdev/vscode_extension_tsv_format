@@ -57,7 +57,7 @@ const formatter_keys_by_language: Record<string, keyof TsvFormatters> = {
 	typescript: 'format_typescript',
 	javascript: 'format_typescript',
 	svelte: 'format_svelte',
-	css: 'format_css',
+	css: 'format_css'
 };
 
 // the failing document, so an unrelated successful save doesn't clear the indicator
@@ -153,7 +153,7 @@ const read_ignore_file = async (uri: vscode.Uri): Promise<string | undefined> =>
  * folder-root file plus structural pruning instead of aborting activation. */
 const find_ignore_files = async (
 	folder: vscode.WorkspaceFolder,
-	name: string,
+	name: string
 ): Promise<Map<string, string>> => {
 	const root = folder.uri.path;
 	const out = new Map<string, string>();
@@ -161,7 +161,7 @@ const find_ignore_files = async (
 	try {
 		found = await vscode.workspace.findFiles(
 			new vscode.RelativePattern(folder, `**/${name}`),
-			'**/node_modules/**',
+			'**/node_modules/**'
 		);
 	} catch (err) {
 		// a `findFiles` rejection (likeliest on the web host's virtual FS) must not
@@ -171,7 +171,7 @@ const find_ignore_files = async (
 		// files only" plus the always-on safety-net / build-output pruning, never to
 		// "format everything"
 		output_channel?.appendLine(
-			`[${new Date().toISOString()}] could not scan for ${name} under ${folder.name}: ${to_error_message(err)}`,
+			`[${new Date().toISOString()}] could not scan for ${name} under ${folder.name}: ${to_error_message(err)}`
 		);
 		return out;
 	}
@@ -199,7 +199,7 @@ const reload_ignore_folder = async (folder: vscode.WorkspaceFolder): Promise<voi
 	// repo-root/folder-root `.formatignore` is honored (and shadows `.prettierignore`)
 	if (!formatignores.has('')) {
 		const root_fmt = await read_ignore_file(
-			vscode.Uri.joinPath(folder.uri, formatignore_file_name),
+			vscode.Uri.joinPath(folder.uri, formatignore_file_name)
 		);
 		if (root_fmt !== undefined) formatignores.set('', root_fmt);
 	}
@@ -212,9 +212,7 @@ const reload_ignore_folder = async (folder: vscode.WorkspaceFolder): Promise<voi
 		}
 		// `**/` can miss the folder-root file — read it explicitly
 		if (!gitignores.has('')) {
-			const root_gi = await read_ignore_file(
-				vscode.Uri.joinPath(folder.uri, gitignore_file_name),
-			);
+			const root_gi = await read_ignore_file(vscode.Uri.joinPath(folder.uri, gitignore_file_name));
 			if (root_gi !== undefined) gitignores.set('', root_gi);
 		}
 		// `.prettierignore` is hierarchical inside a repo (like `.formatignore`);
@@ -226,13 +224,18 @@ const reload_ignore_folder = async (folder: vscode.WorkspaceFolder): Promise<voi
 		// `**/` can miss the folder-root file — read it explicitly
 		if (!prettierignores.has('')) {
 			const root_pi = await read_ignore_file(
-				vscode.Uri.joinPath(folder.uri, prettierignore_file_name),
+				vscode.Uri.joinPath(folder.uri, prettierignore_file_name)
 			);
 			if (root_pi !== undefined) prettierignores.set('', root_pi);
 		}
 	}
 
-	folder_ignores.set(folder.uri.toString(), {in_repo, gitignores, formatignores, prettierignores});
+	folder_ignores.set(folder.uri.toString(), {
+		in_repo,
+		gitignores,
+		formatignores,
+		prettierignores
+	});
 };
 
 const clear_ignore_folder = (folder: vscode.WorkspaceFolder): void => {
@@ -272,7 +275,9 @@ const is_document_ignored = (document: vscode.TextDocument): boolean => {
 	// URIs are always `/`-separated, so the folder path is a prefix of the doc's
 	const root = folder.uri.path;
 	const doc_path = document.uri.path;
-	const rel = doc_path.startsWith(root) ? doc_path.slice(root.length).replace(/^\/+/, '') : doc_path;
+	const rel = doc_path.startsWith(root)
+		? doc_path.slice(root.length).replace(/^\/+/, '')
+		: doc_path;
 
 	const stack = new ignore_stack_ctor();
 	try {
@@ -309,7 +314,7 @@ const is_document_ignored = (document: vscode.TextDocument): boolean => {
  */
 const activate_ignore = async (
 	context: vscode.ExtensionContext,
-	IgnoreStack: IgnoreStackCtor,
+	IgnoreStack: IgnoreStackCtor
 ): Promise<void> => {
 	ignore_stack_ctor = IgnoreStack;
 	// await the initial load so the cache is populated before the provider can run:
@@ -320,7 +325,7 @@ const activate_ignore = async (
 	// one watcher covers .gitignore + the tsv files in every folder; any change
 	// re-reads that folder's whole state off the save path (works in both hosts)
 	const watcher = vscode.workspace.createFileSystemWatcher(
-		'**/.{gitignore,prettierignore,formatignore}',
+		'**/.{gitignore,prettierignore,formatignore}'
 	);
 	const on_change = (uri: vscode.Uri): void => {
 		const folder = vscode.workspace.getWorkspaceFolder(uri);
@@ -334,7 +339,7 @@ const activate_ignore = async (
 		vscode.workspace.onDidChangeWorkspaceFolders((event) => {
 			for (const folder of event.added) void reload_ignore_folder(folder);
 			for (const folder of event.removed) clear_ignore_folder(folder);
-		}),
+		})
 	);
 };
 
@@ -352,7 +357,7 @@ const to_error_message = (value: unknown): string =>
  */
 const formatter_for_document = (
 	document: vscode.TextDocument,
-	formatters: TsvFormatters,
+	formatters: TsvFormatters
 ): ((source: string) => string) | undefined => {
 	const key =
 		formatter_keys_by_language[document.languageId] ??
@@ -392,7 +397,7 @@ const clear_format_failure = (document: vscode.TextDocument): void => {
  */
 const format_document = (
 	document: vscode.TextDocument,
-	formatters: TsvFormatters,
+	formatters: TsvFormatters
 ): vscode.TextEdit[] => {
 	const format = formatter_for_document(document, formatters);
 	if (!format) return [];
@@ -426,7 +431,7 @@ const format_document = (
 export const activate_formatter = async (
 	context: vscode.ExtensionContext,
 	formatters: TsvFormatters,
-	IgnoreStack: IgnoreStackCtor,
+	IgnoreStack: IgnoreStackCtor
 ): Promise<void> => {
 	output_channel = vscode.window.createOutputChannel('tsv');
 	status_item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0);
@@ -440,7 +445,7 @@ export const activate_formatter = async (
 		}),
 		// clear the parse-error indicator when the failing document is closed, so a
 		// lingering ⚠ doesn't outlive a file the user never re-saves
-		vscode.workspace.onDidCloseTextDocument(clear_format_failure),
+		vscode.workspace.onDidCloseTextDocument(clear_format_failure)
 	);
 
 	await activate_ignore(context, IgnoreStack);
@@ -448,7 +453,7 @@ export const activate_formatter = async (
 	const provider: vscode.DocumentFormattingEditProvider = {
 		provideDocumentFormattingEdits(document) {
 			return format_document(document, formatters);
-		},
+		}
 	};
 
 	// One provider for every supported language. No `scheme` filter, so it covers
@@ -457,15 +462,15 @@ export const activate_formatter = async (
 	// (`contributes.languages`), so the `svelte` id is present without the Svelte
 	// extension; the `**/*.svelte` pattern is a defensive backstop for that id.
 	const selector: vscode.DocumentSelector = [
-		{language: 'typescript'},
-		{language: 'javascript'},
-		{language: 'svelte'},
-		{language: 'css'},
-		{pattern: '**/*.svelte'},
+		{ language: 'typescript' },
+		{ language: 'javascript' },
+		{ language: 'svelte' },
+		{ language: 'css' },
+		{ pattern: '**/*.svelte' }
 	];
 
 	context.subscriptions.push(
-		vscode.languages.registerDocumentFormattingEditProvider(selector, provider),
+		vscode.languages.registerDocumentFormattingEditProvider(selector, provider)
 	);
 };
 
