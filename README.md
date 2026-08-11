@@ -60,6 +60,10 @@ support - for now tsv formats whole files only.
   `⚠ tsv` item appears in the status bar, and the details go to the **tsv**
   Output channel (click the status item, or run **tsv format: Show Output**).
 
+## Contributing
+
+[fuz.dev/contributing](https://www.fuz.dev/contributing)
+
 ## License
 
 [MIT](LICENSE)
