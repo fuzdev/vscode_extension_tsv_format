@@ -131,19 +131,15 @@ The runtime dependency is **vendored into the bundle**: esbuild inlines
 in `node_modules` *at build time* — the published extension does not resolve the
 dependency at install time. Two consequences:
 
-- **The dependency must be published before the extension is.** `package.json`
-  pins `@fuzdev/tsv_format_wasm@^0.2.0` (for `is_path_pruned`), but only `0.1.0`
-  is on the registry until tsv ships v0.2. Until then a clean `npm ci` / `npm
-  install` **fails** (`ETARGET`, no matching `^0.2.0`), and the only working tree
-  is one with a locally-built WASM linked into `node_modules` — which reports
-  `0.1.0` but contains `is_path_pruned`. Building/publishing the `.vsix` from that
-  tree ships an unpublished WASM. **Before the marketplace publish:** confirm tsv
-  v0.2 is on the registry, then run a clean `npm install` so `package-lock.json`
-  resolves `^0.2.0` from the registry (the lock is otherwise stale at `^0.1.0`)
-  and the bundled WASM has published provenance. The go/no-go check is "`npm ci`
-  succeeds against the registry."
+- **The bundled WASM must have published provenance.** A tree with a
+  locally-built WASM linked into `node_modules` builds fine but can carry
+  exports the reported version never published — a `.vsix` built from it ships
+  an unpublished WASM. **Before a marketplace publish:** run a clean `npm
+  install` so `package-lock.json` resolves the range from the registry. The
+  go/no-go check is "`npm ci` succeeds against the registry."
 - **Updating the formatter = rebuild, not a user dependency bump.** To pick up a
-  new tsv release, bump the `@fuzdev/tsv_format_wasm` range, `npm install`, `npm
+  new tsv release, bump the `@fuzdev/tsv_format_wasm` range (caret ranges on 0.x
+  don't cross minors, so each tsv minor needs a range bump), `npm install`, `npm
   run check`, then re-`package`/publish. There is no runtime auto-update of the
   formatter — its version is frozen into each `.vsix`.
 
